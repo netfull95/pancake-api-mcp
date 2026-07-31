@@ -1,0 +1,46 @@
+{
+  "name": "pancake-api-mcp",
+  "version": "1.0.0",
+  "description": "MCP server that serves the Pancake API documentation so an AI assistant can read it directly",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "pancake-api-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "spec",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "prepare": "npm run build",
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "sync-spec": "node scripts/sync-spec.mjs",
+    "inspect": "npm run build && npx @modelcontextprotocol/inspector node dist/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "pancake",
+    "pancake-api",
+    "openapi",
+    "documentation"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "js-yaml": "^4.1.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
