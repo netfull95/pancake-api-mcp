@@ -38,7 +38,14 @@ import {
   getGuideDescription,
   getGuideTool,
 } from "./tools/get-guide.js";
+import {
+  callEndpointSchema,
+  callEndpointDescription,
+  callEndpointTool,
+} from "./tools/call-endpoint.js";
+import { authStatusDescription, authStatusTool } from "./tools/auth-status.js";
 import { registerResources } from "./resources.js";
+import { getConfig, TOKEN_SPECS, tokenForScheme } from "./config.js";
 
 const server = new McpServer({
   name: "pancake-api-mcp",
@@ -91,13 +98,37 @@ server.registerTool(
   async (args) => text(getGuideTool(args))
 );
 
+server.registerTool(
+  "auth_status",
+  { description: authStatusDescription, inputSchema: {} },
+  async () => text(authStatusTool())
+);
+
+server.registerTool(
+  "call_endpoint",
+  { description: callEndpointDescription, inputSchema: callEndpointSchema.shape },
+  async (args) => text(await callEndpointTool(args as any))
+);
+
 registerResources(server);
+
+/** One stderr line summarising token config, so misconfiguration is obvious. */
+function describeTokens(): string {
+  const config = getConfig();
+  const parts = Object.values(TOKEN_SPECS).map(
+    (spec) => `${spec.param}: ${tokenForScheme(spec.scheme, config) ? "set" : "not set"}`
+  );
+  if (config.readOnly) parts.push("read-only");
+  return parts.join(", ");
+}
 
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // Log to stderr so we don't corrupt the stdio JSON-RPC stream.
-  console.error("pancake-api-mcp server running on stdio");
+  console.error(
+    `pancake-api-mcp server running on stdio (${describeTokens()})`
+  );
 }
 
 main().catch((error) => {

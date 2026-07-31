@@ -267,6 +267,15 @@ export function findEndpoint(
   );
 }
 
+/** securityScheme names referenced by an operation, e.g. ["PageAccessToken"]. */
+export function operationSecuritySchemes(operation: any): string[] {
+  const names = new Set<string>();
+  for (const entry of operation?.security ?? []) {
+    for (const key of Object.keys(entry ?? {})) names.add(key);
+  }
+  return [...names];
+}
+
 export function findWebhook(
   index: SpecIndex,
   event: string

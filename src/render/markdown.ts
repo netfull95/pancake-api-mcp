@@ -2,9 +2,11 @@ import {
   EndpointInfo,
   GuideInfo,
   WebhookInfo,
+  operationSecuritySchemes,
   refName,
   resolveRef,
 } from "../spec/loader.js";
+import { getConfig, tokenForScheme, TOKEN_SPECS } from "../config.js";
 
 // How deep to expand nested schema properties before summarising. Cycles are
 // always cut by the `seen` set; this simply keeps very large payloads readable.
@@ -152,13 +154,90 @@ export function renderSchema(schema: any, schemas: Record<string, any>): string 
 // Endpoint
 // ---------------------------------------------------------------------------
 
-function securityNames(operation: any): string[] {
-  const security = operation.security ?? [];
-  const names = new Set<string>();
-  for (const entry of security) {
-    for (const key of Object.keys(entry ?? {})) names.add(key);
+/**
+ * "`PageAccessToken` (query `page_access_token`, env `PANCAKE_PAGE_ACCESS_TOKEN` — configured)"
+ * so a reader knows both how to pass the token and whether this server has one.
+ */
+function renderAuthLine(operation: any): string {
+  const schemes = operationSecuritySchemes(operation);
+  if (!schemes.length) return "**Authentication:** none";
+  const config = getConfig();
+  const described = schemes.map((scheme) => {
+    const spec = TOKEN_SPECS[scheme];
+    if (!spec) return `\`${scheme}\``;
+    const state = tokenForScheme(scheme, config)
+      ? `env \`${spec.env}\` configured`
+      : `env \`${spec.env}\` **not set**`;
+    return `\`${scheme}\` — query \`${spec.param}\` (${state})`;
+  });
+  return `**Authentication:** ${described.join(", ")}`;
+}
+
+/** Shell-quote a value for the example curl command. */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * A copy-pasteable curl command. Token values are never printed — the command
+ * references the environment variable instead, so the example is safe to share.
+ */
+function renderExampleRequest(endpoint: EndpointInfo): string {
+  const { operation } = endpoint;
+  const server = endpoint.servers[0];
+  if (!server?.url) return "";
+
+  const config = getConfig();
+  const tokenSpecs = operationSecuritySchemes(operation)
+    .map((scheme) => TOKEN_SPECS[scheme])
+    .filter(Boolean);
+  const tokenParams = new Set(tokenSpecs.map((spec) => spec.param));
+
+  // Path placeholders: fill page_id from the env default when we have one.
+  const path = endpoint.path.replace(/\{([^}]+)\}/g, (_m, name: string) =>
+    name === "page_id" && config.defaultPageId
+      ? config.defaultPageId
+      : `<${name}>`
+  );
+
+  const query: string[] = tokenSpecs.map((spec) => `${spec.param}=$${spec.env}`);
+  for (const param of operation.parameters ?? []) {
+    if (!param?.name || param.in !== "query") continue;
+    if (tokenParams.has(param.name)) continue;
+    if (!param.required) continue;
+    const value =
+      param.name === "page_id" && config.defaultPageId
+        ? config.defaultPageId
+        : `<${param.name}>`;
+    query.push(`${param.name}=${value}`);
   }
-  return [...names];
+
+  const url = `${server.url.replace(/\/+$/, "")}${path}${query.length ? `?${query.join("&")}` : ""}`;
+  const lines = [`curl -X ${endpoint.method} ${shellQuote(url)}`];
+
+  const jsonBody = operation.requestBody?.content?.["application/json"];
+  if (jsonBody) {
+    const example =
+      jsonBody.example !== undefined
+        ? JSON.stringify(jsonBody.example)
+        : '{ "...": "..." }';
+    lines.push(`  -H 'Content-Type: application/json'`, `  -d ${shellQuote(example)}`);
+  }
+
+  const missing = tokenSpecs.filter((spec) => !tokenForScheme(spec.scheme, config));
+  const note = missing.length
+    ? `_Set ${missing.map((spec) => `\`${spec.env}\``).join(" / ")} in this server's env to run it via \`call_endpoint\`._`
+    : `_The token is configured — \`call_endpoint\` can run this endpoint directly._`;
+
+  return [
+    "## Example request",
+    "",
+    "```bash",
+    lines.join(" \\\n"),
+    "```",
+    "",
+    note,
+  ].join("\n");
 }
 
 function renderParameters(operation: any): string {
@@ -242,11 +321,7 @@ export function renderEndpoint(
     }
   }
 
-  const auth = securityNames(operation);
-  parts.push(
-    "",
-    `**Authentication:** ${auth.length ? auth.map((a) => `\`${a}\``).join(", ") : "none"}`
-  );
+  parts.push("", renderAuthLine(operation));
 
   if (endpoint.tag) parts.push(`**Tag:** ${endpoint.tag}`);
 
@@ -254,6 +329,9 @@ export function renderEndpoint(
 
   const params = renderParameters(operation);
   if (params) parts.push("", params);
+
+  const example = renderExampleRequest(endpoint);
+  if (example) parts.push("", example);
 
   const requestBody = renderRequestBody(operation, schemas);
   if (requestBody) parts.push("", requestBody);

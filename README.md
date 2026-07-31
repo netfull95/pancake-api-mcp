@@ -4,7 +4,9 @@ A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that se
 
 Point Claude Desktop, Cursor, or any MCP client at this server and your AI can **read the Pancake docs on its own** — search endpoints, pull a single endpoint's full contract (parameters, request body, response schema with every `$ref` expanded), inspect webhook payloads, and read the authentication / rate-limit / webhook-setup guides — without you copy-pasting anything.
 
-The docs are bundled as a static snapshot of the official OpenAPI spec, so the server is self-contained and offline. It is **read-only**: it never calls the live Pancake API and never handles your access tokens.
+The docs are bundled as a static snapshot of the official OpenAPI spec, so documentation lookups are self-contained and offline.
+
+Optionally, [configure your access tokens](#configure-your-access-tokens-optional) in the server's environment and the `call_endpoint` tool can also **call the live Pancake API** for you — the right token (`access_token` or `page_access_token`) is picked from each endpoint's OpenAPI security scheme and attached automatically. Without tokens the server stays fully offline and documentation-only.
 
 ## What's inside
 
@@ -23,6 +25,8 @@ The docs are bundled as a static snapshot of the official OpenAPI spec, so the s
 | `get_webhook` | `event` (e.g. `messaging`) | Webhook payload schema + example |
 | `list_guides` | — | Guide section ids + titles |
 | `get_guide` | `id` (e.g. `authentication`) | Full guide section |
+| `auth_status` | — | Which tokens are configured (masked), plus the other env settings |
+| `call_endpoint` | `id`, `params?`, `body?` | **Live call** to the Pancake API — status + response body |
 
 Every endpoint, webhook, and guide is also exposed as an MCP **resource** (`pancake-api://endpoint/...`, `pancake-api://webhook/...`, `pancake-api://guide/...`) for clients that browse resources.
 
@@ -39,6 +43,27 @@ npm run build
 
 This produces `dist/index.js`, the server entry point.
 
+## Configure your access tokens (optional)
+
+Pancake uses two token types, both passed as a query parameter. Set them as environment variables of the MCP server and `call_endpoint` will attach the right one per endpoint — you never paste a token into a chat, and tokens are never accepted as tool input.
+
+| Variable | Query param | Needed for | How to get it |
+|---|---|---|---|
+| `PANCAKE_USER_ACCESS_TOKEN` | `access_token` | 2 account-level endpoints under `https://pages.fm/api/v1` (list pages, generate a page token) | Pancake → **Account → Personal settings → API Access Token**. Valid up to 90 days. |
+| `PANCAKE_PAGE_ACCESS_TOKEN` | `page_access_token` | 24 page-level endpoints under `https://pages.fm/api/public_api/v1\|v2` (conversations, messages, statistics, customers…) | Page → **Settings → Tools**, or `POST /pages/{page_id}/generate_page_access_token`. Does not expire. |
+
+Optional extras:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `PANCAKE_PAGE_ID` | — | Default value for `page_id`, so you don't repeat it on every call |
+| `PANCAKE_READ_ONLY` | `false` | When `true`, `call_endpoint` accepts **GET only** and refuses every write |
+| `PANCAKE_TIMEOUT_MS` | `30000` | Timeout for live API calls |
+
+Ask your assistant to run **`auth_status`** to verify the setup — it reports which variables are set without revealing their values.
+
+> **Writes are enabled by default.** With a page token configured, `call_endpoint` can really send messages to customers, change tags, and delete data. Set `PANCAKE_READ_ONLY=true` if you only want the assistant to read. Tokens are read from the environment only, redacted from every tool response and error message, and never written to logs.
+
 ## Connect it to your AI client
 
 ### Claude Desktop
@@ -53,11 +78,18 @@ Edit your `claude_desktop_config.json`:
   "mcpServers": {
     "pancake-api": {
       "command": "node",
-      "args": ["/absolute/path/to/pancake-api-mcp/dist/index.js"]
+      "args": ["/absolute/path/to/pancake-api-mcp/dist/index.js"],
+      "env": {
+        "PANCAKE_USER_ACCESS_TOKEN": "your-user-access-token",
+        "PANCAKE_PAGE_ACCESS_TOKEN": "your-page-access-token",
+        "PANCAKE_PAGE_ID": "optional-default-page-id"
+      }
     }
   }
 }
 ```
+
+Drop the `env` block entirely to run in offline documentation-only mode.
 
 Restart Claude Desktop. You should see the `pancake-api` tools appear.
 
@@ -70,7 +102,10 @@ In **Settings → MCP → Add new global MCP server** (or edit `~/.cursor/mcp.js
   "mcpServers": {
     "pancake-api": {
       "command": "node",
-      "args": ["/absolute/path/to/pancake-api-mcp/dist/index.js"]
+      "args": ["/absolute/path/to/pancake-api-mcp/dist/index.js"],
+      "env": {
+        "PANCAKE_PAGE_ACCESS_TOKEN": "your-page-access-token"
+      }
     }
   }
 }
@@ -86,6 +121,12 @@ Once connected, ask your AI things like:
 - *"What endpoint lists conversations for a page, and what parameters does it take?"*
 - *"Show me the payload of the `messaging` webhook."*
 - *"Search the Pancake docs for anything about tags."*
+
+And, with tokens configured:
+
+- *"Check my Pancake token setup."* (`auth_status`)
+- *"List the last 60 conversations of page 12345."* (`call_endpoint`)
+- *"Send 'thanks for your order' to conversation X."* (a write — confirm before you say yes)
 
 ## Development
 
